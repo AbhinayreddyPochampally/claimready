@@ -9,7 +9,7 @@ function Row({ r, older, open, toggle, superseded }) {
   return (
     <tr className={superseded ? 'old' : ''}>
       <td className="small"><b>{ago(r.created_at)}</b><div className="muted">{when(r.created_at)}</div>{superseded && <span className="pill none" style={{ marginTop: 4 }}>Superseded</span>}{older > 0 && <button className="linkbtn" aria-expanded={open} onClick={toggle}>{open ? 'Hide' : 'Show'} {older} earlier run{older > 1 ? 's' : ''}</button>}</td>
-      <td><a href={`/claim/${r.claim_id}`}><span className="code">{r.claim_id}</span></a><div className="small">{r.patient}</div></td>
+      <td><a href={`/claim/${r.claim_id}`}><span className="code">{r.claim_id}</span></a><div className="small">{r.patient}</div>{!superseded && <a className="btn ghost" style={{ marginTop: 6, padding: '4px 10px', fontSize: 13 }} href={`/insurer/${r.claim_id}`}>Review</a>}</td>
       <td><span className={`pill ${chip.cls}`}>{chip.label}</span></td>
       <td className="num">{r.approved_amount == null ? <span className="muted small">Awaits review</span> : inr(r.approved_amount)}</td>
       <td className="num">{inr(r.patient_payable)}</td>

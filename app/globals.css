@@ -259,3 +259,18 @@ tr.old td { background: #fafbfc; color: var(--muted); }
 .trace.compact { max-height: calc(100vh - 560px); min-height: 150px; }
 .trace.tight { max-height: calc(100vh - 640px); min-height: 130px; }
 @media (max-width: 1100px) { .trace.compact, .trace.tight { max-height: 420px; } }
+.thread { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.thread > li { border: 1px solid var(--line-2); border-radius: var(--r); padding: 10px 12px; background: #fff; }
+.thread > li.t-hospital { border-left: 3px solid var(--info); }
+.thread > li.t-insurer_ai { border-left: 3px solid var(--hold); }
+.thread > li.t-insurer_officer { border-left: 3px solid var(--brand); }
+.t-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13.5px; }
+.t-body { margin-top: 4px; font-size: 14px; }
+.t-items { margin: 6px 0 0 18px; padding: 0; font-size: 13px; color: var(--ink-2); }
+.reply { margin-top: 14px; padding: 14px; border: 1px dashed var(--line); border-radius: var(--r); background: #fbfcfc; display: grid; gap: 8px; }
+.reply .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.reply .form { display: grid; gap: 8px; margin-top: 6px; }
+.reply textarea, .reply input[type=number], .reply select { font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 4px; width: 100%; }
+.reply .chk { display: flex; gap: 8px; align-items: center; }
+.file-row { display: grid; grid-template-columns: 1fr 220px; gap: 8px; align-items: center; }
+@media (max-width: 640px) { .file-row { grid-template-columns: 1fr; } }
