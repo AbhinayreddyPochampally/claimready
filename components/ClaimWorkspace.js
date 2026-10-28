@@ -1,46 +1,75 @@
 'use client';
 import { useRef, useState, useEffect } from 'react';
 import { inr, secs, decisionChip } from './format';
+import { useThread, ThreadList, HospitalReply, status as threadStatus } from './Thread';
 
-const TOOL_LABEL = {
-  read_claim_file: ['Gather', 'Read the claim file', 'check'],
-  extract_clinical_facts: ['Gather', 'Extract clinical facts (OCR + LLM)', 'check'],
-  check_policy: ['Check policy', 'Rules engine', 'check'],
-  link_evidence: ['Link evidence', 'Bill line ↔ clinical record', 'check'],
-  map_charge_code: ['Fix', 'Map hospital code to insurer package', 'fix'],
-  apply_code_mapping: ['Fix', 'Apply insurer package code', 'fix'],
-  search_hospital_records: ['Fix', 'Search hospital records', 'fix'],
-  propose_bill_change: ['Ask desk', 'Propose bill change (needs approval)', 'fix'],
-  check_duplicate_documents: ['Check', 'Duplicate-document check', 'check'],
-  notify_desk: ['Tell desk', 'Message to desk executive', 'fix'],
-  flag_for_review: ['Flag', 'Flag for insurer adjudicator', 'fix'],
-  submit_claim: ['Submit', 'Send packet to insurer / TPA', 'submit']
+const TOOL = {
+  read_claim_file: ['file', 'Read the claim file', 'check'],
+  extract_clinical_facts: ['file', 'Extract clinical facts', 'check'],
+  check_policy: ['policy', 'Run policy rules', 'check'],
+  link_evidence: ['evidence', 'Link bill lines to evidence', 'check'],
+  map_charge_code: ['agent', 'Map hospital code to insurer package', 'fix'],
+  apply_code_mapping: ['agent', 'Apply insurer package code', 'fix'],
+  search_hospital_records: ['agent', 'Search hospital records', 'fix'],
+  propose_bill_change: ['desk', 'Propose a bill change (needs the desk)', 'fix'],
+  check_duplicate_documents: ['agent', 'Check for reused documents', 'check'],
+  notify_desk: ['agent', 'Message the desk', 'fix'],
+  flag_for_review: ['agent', 'Flag for the insurer’s adjudicator', 'flag'],
+  submit_claim: ['insurer', 'Submit packet to the insurer', 'submit']
 };
+
+const STEPS = [
+  ['file', 'File', 'Bill and documents'],
+  ['evidence', 'Evidence', 'Line-by-line links'],
+  ['policy', 'Policy checks', 'Clause citations'],
+  ['agent', 'Agent trace', 'Tool calls'],
+  ['desk', 'Desk approval', 'Money changes'],
+  ['insurer', 'Insurer result', 'Simulated re-check']
+];
 
 function summarize(name, args, r) {
   if (!r) return '';
   if (r.error) return `Error: ${r.error}`;
   switch (name) {
-    case 'read_claim_file': return `${r.bill.length} bill lines, ${r.documents.length} documents, total ${inr(r.billTotal)}. Policy tenure ${r.policy.tenureMonths} months.`;
-    case 'extract_clinical_facts': return `${r.diagnosis || ''}${r.icuDays ? ` · ICU ${r.icuDays} days` : ''}${r.neurologicalSymptoms === false ? ' · no neurological symptoms recorded' : ''}${r.extractedBy ? ` · by ${r.extractedBy}` : ''}`;
+    case 'read_claim_file': return `${r.bill.length} bill lines and ${r.documents.length} documents, total ${inr(r.billTotal)}. Policy held for ${r.policy.tenureMonths} months.`;
+    case 'extract_clinical_facts': return `${r.diagnosis || ''}${r.icuDays ? `, ICU ${r.icuDays} days` : ''}${r.neurologicalSymptoms === false ? ', no neurological symptoms recorded' : ''}. Extracted by ${r.extractedBy || 'rule-based reader'}.`;
     case 'check_policy': {
       const f = r.checks.filter(c => c.status === 'fail'), w = r.checks.filter(c => c.status === 'warn'), p = r.checks.filter(c => c.status === 'pass');
-      return `${f.length} fail · ${w.length} warn · ${p.length} pass.${f.length ? ' ' + f.map(c => `${c.clause}: ${c.detail}`).join(' ') : ''}`;
+      return `${f.length} fail, ${w.length} warning, ${p.length} pass.${f.length ? ' ' + f.map(c => `${c.clause}: ${c.detail}`).join(' ') : ''}`;
     }
     case 'link_evidence': return `${r.lines.length - r.unlinked.length} of ${r.lines.length} lines linked.${r.unlinked.length ? ' Unlinked: ' + r.unlinked.map(u => `${u.line} ${u.desc} (needs ${u.missing.join(', ')})`).join('; ') : ''}`;
-    case 'map_charge_code': return `${r.hospitalCode} → ${r.suggestion.code} "${r.suggestion.name}" (${r.confidence} confidence). Billed ${inr(r.billedAmount)} vs package ${inr(r.suggestion.rate)}.`;
-    case 'apply_code_mapping': return `${r.line}: ${r.from} → ${r.to}. Amount unchanged.`;
-    case 'search_hospital_records': return r.found ? (r.alreadyAttached ? `${r.tag} already attached.` : `Found "${r.attached.title}" from ${r.attached.source}. Attached to the file.`) : `Not found. Searched ${r.searched.join(', ')}. ${r.note}`;
-    case 'propose_bill_change': return r.approved ? `Approved by ${r.by}. Removed ${r.removed.desc} (${inr(r.removed.amount)}). New bill ${inr(r.newBillTotal)}.` : r.note || 'Waiting for desk approval';
+    case 'map_charge_code': return `${r.hospitalCode} maps to ${r.suggestion.code}, "${r.suggestion.name}" (${r.confidence} confidence). Billed ${inr(r.billedAmount)} against a package rate of ${inr(r.suggestion.rate)}.`;
+    case 'apply_code_mapping': return `${r.line}: ${r.from} changed to ${r.to}. Amount unchanged.`;
+    case 'search_hospital_records': return r.found ? (r.alreadyAttached ? `${r.tag} is already attached.` : `Found "${r.attached.title}" in ${r.attached.source} and attached it to the file.`) : `Not found in ${r.searched.join(', ')}. ${r.note}`;
+    case 'propose_bill_change': return r.approved ? `Approved by ${r.by}. Removed ${r.removed.desc} (${inr(r.removed.amount)}). New bill ${inr(r.newBillTotal)}.` : r.note || 'Waiting for the desk.';
     case 'check_duplicate_documents': return r.matches.length ? r.matches.map(m => `"${m.document}" matches claim ${m.matches.claimRef} (${m.matches.patient}, ${m.matches.hospital}).`).join(' ') : `No matches across ${r.checked} report fingerprints.`;
     case 'notify_desk': return args.message;
     case 'flag_for_review': return args.reason;
-    case 'submit_claim': return r.status === 'QUERY' ? r.message : r.status === 'AUTO_APPROVED' ? `AUTO-APPROVED ${inr(r.approvedAmount)} in ${secs(r.decisionMs)}. Insurer re-verified all checks.` : `Routed to adjudicator (${r.lane}). ${(r.reasons || []).join(' ')}`;
+    case 'submit_claim': return r.status === 'QUERY' ? r.message : r.status === 'AUTO_APPROVED' ? `Simulated insurer re-verified every check and auto-approved ${inr(r.approvedAmount)}.` : `Simulated insurer routed it to an adjudicator (${r.lane === 'flagged' ? 'flagged' : 'clean, above the auto limit'}).`;
     default: return '';
   }
 }
 
-export default function ClaimWorkspace({ claim, total, clauses, policy }) {
+function stepStatus(events, paused, final, running) {
+  const done = new Set(events.filter(e => e.type === 'tool_result').map(e => TOOL[e.name] && TOOL[e.name][0]));
+  const s = {};
+  const open = [...events].reverse().find(e => e.type === 'tool_call');
+  const openStage = open && !events.slice(events.lastIndexOf(open)).some(e => e.type === 'tool_result' && e.name === open.name) ? TOOL[open.name] && TOOL[open.name][0] : null;
+  const human = events.some(e => e.type === 'human');
+  for (const [k] of STEPS) s[k] = done.has(k) ? 'done' : '';
+  if (events.length) s.agent = final ? 'done' : 'active';
+  if (paused) s.desk = 'attn';
+  else if (human) s.desk = 'done';
+  else if (final) s.desk = 'skip';
+  if (final && final.decision) s.insurer = final.decision.status === 'AUTO_APPROVED' ? 'done' : final.decision.lane === 'flagged' ? 'flag' : 'attn';
+  if (final && final.state && final.state.evidence && final.state.evidence.some(x => !x.linked)) s.evidence = 'flag';
+  if (final && final.state && final.state.checks && final.state.checks.some(x => x.status === 'fail')) s.policy = 'flag';
+  if (running && openStage && s[openStage] !== 'done') s[openStage] = 'active';
+  return s;
+}
+const STEP_NOTE = { done: 'Done', active: 'In progress', attn: 'Needs attention', flag: 'Open issue', skip: 'Not needed' };
+
+export default function ClaimWorkspace({ claim, clauses, policy, planner, demo }) {
   const [events, setEvents] = useState([]);
   const [running, setRunning] = useState(false);
   const [snap, setSnap] = useState(null);
@@ -49,26 +78,39 @@ export default function ClaimWorkspace({ claim, total, clauses, policy }) {
   const [mode, setMode] = useState(null);
   const [openDoc, setOpenDoc] = useState(null);
   const [fetchedText, setFetchedText] = useState({});
-  const [t0, setT0] = useState(null);
-  const [elapsed, setElapsed] = useState(0);
+  const [agentMs, setAgentMs] = useState(0);
+  const [segStart, setSegStart] = useState(null);
+  const [tick, setTick] = useState(0);
   const traceRef = useRef(null);
+  const [thread, setThread, reloadThread] = useThread(claim.id, final ? 1 : 0);
 
   useEffect(() => {
-    if (!running || !t0) return;
-    const i = setInterval(() => setElapsed(Date.now() - t0), 200);
+    if (!running) return;
+    const i = setInterval(() => setTick(x => x + 1), 200);
     return () => clearInterval(i);
-  }, [running, t0]);
-  useEffect(() => { if (traceRef.current) traceRef.current.scrollTop = traceRef.current.scrollHeight; }, [events]);
+  }, [running]);
+  useEffect(() => { if (traceRef.current) traceRef.current.scrollTop = traceRef.current.scrollHeight; }, [events, paused, final]);
+  useEffect(() => {
+    const id = paused ? 'desk' : final ? 'insurer' : null;
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); const f = el.querySelector('button, [tabindex]'); if (f) setTimeout(() => f.focus({ preventScroll: true }), 400); }
+  }, [paused, final]);
+
+  const liveMs = agentMs + (running && segStart ? Date.now() - segStart : 0);
 
   async function start(resume) {
-    setRunning(true);
-    if (!resume) { setEvents([]); setSnap(null); setFinal(null); setFetchedText({}); setT0(Date.now()); setElapsed(0); }
-    setPaused(null);
+    const t = Date.now();
+    if (!resume) { setEvents([]); setSnap(null); setFinal(null); setFetchedText({}); setAgentMs(0); setMode(null); }
+    const base = resume ? agentMs : 0;
+    setPaused(null); setSegStart(t); setRunning(true);
     let res;
     try {
-      res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ claimId: claim.id, resume, stepsSoFar: resume ? events.filter(x => x.type === 'tool_call').length : 0 }) });
+      res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ claimId: claim.id, resume, stepsSoFar: resume ? events.filter(x => x.type === 'tool_call').length : 0, runMsSoFar: base }) });
+      if (!res.ok || !res.body) throw new Error(`server answered ${res.status}`);
     } catch (e) {
-      setEvents(ev => [...ev, { type: 'error', text: 'Network error: ' + e.message }]); setRunning(false); return;
+      setEvents(ev => [...ev, { type: 'error', text: `Could not reach the agent service (${e.message}). Nothing was submitted. Try the run again.` }]);
+      setRunning(false); setAgentMs(base + (Date.now() - t)); setSegStart(null); return;
     }
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -85,16 +127,17 @@ export default function ClaimWorkspace({ claim, total, clauses, policy }) {
         handle(e);
       }
     }
-    setRunning(false);
+    setAgentMs(base + (Date.now() - t)); setSegStart(null); setRunning(false);
   }
 
   function handle(e) {
-    if (e.type === 'start') setMode({ mode: e.mode, model: e.model });
+    if (e.type === 'start') setMode({ mode: e.mode, model: e.model, reason: e.reason });
+    if (e.type === 'mode') setMode({ mode: e.mode, model: e.model, reason: e.reason, switched: true });
     if (e.state) setSnap(e.state);
     if (e.type === 'tool_result' && e.name === 'search_hospital_records' && e.result.attached) {
       setFetchedText(m => ({ ...m, [e.result.attached.id]: e.result.attached.text }));
     }
-    if (e.type === 'paused') { setPaused(e); setRunning(false); }
+    if (e.type === 'paused') setPaused(e);
     if (e.type === 'final') {
       setFinal(e);
       try {
@@ -106,143 +149,163 @@ export default function ClaimWorkspace({ claim, total, clauses, policy }) {
   }
 
   function decide(decision) {
-    const resume = { ...paused.resume, approval: { line_id: paused.approval.line_id, decision } };
-    start(resume);
+    start({ ...paused.resume, approval: { line_id: paused.approval.line_id, decision } });
   }
 
   const bill = snap ? snap.bill : claim.bill;
   const evidence = snap ? Object.fromEntries(snap.evidence.map(e => [e.line, e])) : {};
   const removed = snap ? snap.removedLines : [];
   const docs = snap ? snap.documents : claim.documents.map(d => ({ ...d, fetched: false }));
-  const chip = decisionChip(final && final.decision);
   const d = final && final.decision;
+  const chip = decisionChip(d);
+  const st = stepStatus(events, paused, final, running);
+  const shownMode = mode || (planner.available ? { mode: 'llm', model: planner.model, pending: true } : { mode: 'fallback', model: 'deterministic planner', pending: true });
 
   return (
     <div>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+      <div className="ws-head">
         <div>
-          <a href="/desk" className="small">← Desk queue</a>
-          <h1 style={{ marginTop: 4 }}>{claim.patient.name} <span className="muted" style={{ fontSize: 18 }}>· {claim.id}</span></h1>
-          <div className="muted">{claim.patient.age} {claim.patient.gender} · {claim.diagnosis} ({claim.icd}) · {claim.procedure} · Admitted {claim.admission}, discharge advised {claim.discharge}</div>
+          <a href="/desk" className="small">Back to the discharge queue</a>
+          <h1 style={{ marginTop: 6 }}>{claim.patient.name}, claim {claim.id}</h1>
+          <div className="ws-meta">
+            <div><span>Patient</span>{claim.patient.age} {claim.patient.gender === 'M' ? 'male' : 'female'}</div>
+            <div><span>Diagnosis</span>{claim.diagnosis} ({claim.icd})</div>
+            <div><span>Treatment</span>{claim.procedure}</div>
+            <div><span>Stay</span>{claim.admission} to {claim.discharge}</div>
+            <div><span>Pre-auth</span>{inr(claim.preauthAmount)}</div>
+          </div>
+          {demo && <div className="ws-focus"><b>What this demo claim shows:</b> {demo.detail}</div>}
         </div>
-        <div className="row" style={{ alignItems: 'center' }}>
-          <span className={`chip ${chip.cls}`}>{chip.label}</span>
-          <button className="btn terra" disabled={running || !!paused} onClick={() => start(null)}>
-            {running ? <><span className="pulse" /> Agent working… {secs(elapsed)}</> : events.length ? 'Run agent again' : 'Run ClaimReady agent ▶'}
+        <div style={{ display: 'grid', gap: 8, justifyItems: 'end' }}>
+          <span className={`pill ${paused ? 'gate' : running ? 'info' : chip.cls}`}>{paused ? 'Waiting for desk approval' : running ? 'Agent running' : chip.label}</span>
+          <button className="btn lg" disabled={running || !!paused} onClick={() => start(null)}>
+            {running ? <><span className="pulse" /> Agent working, {secs(liveMs)}</> : paused ? 'Waiting for the desk' : events.length ? 'Run the agent again' : 'Run the agent'}
           </button>
         </div>
       </div>
 
-      <div className="grid2">
-        {/* LEFT: the file */}
+      <nav className="stepper" aria-label="Claim walkthrough">
+        {STEPS.map(([k, name, sub], i) => (
+          <a key={k} href={`#${k}`} className={st[k] ? `s-${st[k]}` : ''}>
+            <b>{i + 1}. {name}</b>{st[k] ? STEP_NOTE[st[k]] : sub}
+          </a>
+        ))}
+      </nav>
+
+      <div className="ws">
         <div>
-          <div className="card">
-            <div className="eyebrow">Claim file</div>
-            <div className="kv" style={{ marginBottom: 12 }}>
-              <div>Insurer / policy</div><div>{policy.insurer} · {policy.product} · SI {inr(policy.sumInsured)}</div>
-              <div>Policy since</div><div>{claim.policyStart}</div>
-              <div>Room</div><div>{claim.room.category} · {inr(claim.room.ratePerDay)}/day × {claim.room.days}{claim.icu ? ` · ICU ${inr(claim.icu.ratePerDay)}/day × ${claim.icu.days}` : ''}</div>
-              <div>Pre-auth approved</div><div>{inr(claim.preauthAmount)}</div>
-              <div>Desk note</div><div>{claim.deskNote}</div>
+          <section className="panel" id="file">
+            <header><h2>1. Claim file</h2><span className="sect-note">Synthetic patient and documents</span></header>
+            <div className="body">
+              <div className="kv" style={{ marginBottom: 14 }}>
+                <div>Insurer and policy</div><div>{policy.insurer}, {policy.product}, sum insured {inr(policy.sumInsured)}</div>
+                <div>Policy since</div><div>{claim.policyStart}</div>
+                <div>Room</div><div>{claim.room.category}, {inr(claim.room.ratePerDay)} a day for {claim.room.days} days{claim.icu ? `; ICU ${inr(claim.icu.ratePerDay)} a day for ${claim.icu.days} days` : ''}</div>
+                <div>Desk note</div><div>{claim.deskNote}</div>
+              </div>
+              <h3 style={{ marginBottom: 8 }}>Documents in the file</h3>
+              <div className="docs">
+                {docs.map(doc => {
+                  const full = claim.documents.find(x => x.id === doc.id);
+                  const text = full ? full.text : fetchedText[doc.id];
+                  const on = openDoc === doc.id;
+                  return (
+                    <div key={doc.id} className="doc">
+                      <button aria-expanded={on} onClick={() => setOpenDoc(on ? null : doc.id)}>
+                        <span>{doc.title}</span>
+                        {doc.fetched ? <span className="pill info">Fetched by the agent</span> : <span className="small muted">{on ? 'Hide' : 'Read'}</span>}
+                      </button>
+                      {on && <div className="txt">{text || 'Text not available.'}{doc.source ? <div className="small muted" style={{ marginTop: 6 }}>Source: {doc.source}</div> : null}</div>}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <h3 style={{ marginBottom: 6 }}>Bill lines</h3>
+          </section>
+
+          <section className="panel" id="evidence">
+            <header><h2>2. Bill lines and evidence</h2><span className="sect-note">{snap ? 'Updated by the agent' : 'Not checked yet'}</span></header>
             <div style={{ overflowX: 'auto' }}>
               <table>
-                <thead><tr><th>Line</th><th>Code</th><th>Description</th><th className="num">Amount</th><th>Evidence</th></tr></thead>
+                <thead><tr><th>Line</th><th>Description and code</th><th className="num">Amount</th><th>Evidence</th></tr></thead>
                 <tbody>
                   {bill.map(l => {
                     const ev = evidence[l.id];
                     const orig = claim.bill.find(x => x.id === l.id);
                     const changed = orig && orig.code !== l.code;
+                    const issue = snap && snap.checks.find(c => c.status === 'fail' && c.line === l.id);
                     return (
                       <tr key={l.id}>
-                        <td>{l.id}</td>
-                        <td>{changed && <div className="strike small">{orig.code}</div>}<span className="code">{l.code}</span></td>
-                        <td>{l.desc}</td>
+                        <td className="code">{l.id}</td>
+                        <td>{l.desc}<div className="small muted">{changed ? <><span className="strike">{orig.code}</span> changed to <b>{l.code}</b></> : l.code}</div></td>
                         <td className="num">{inr(l.amount)}</td>
-                        <td>{!ev ? <span className="chip new">not checked</span> : ev.linked ? <span className="chip good" title={ev.evidence.join(', ')}>linked</span> : <span className="chip bad" title={ev.missing.join(', ')}>missing {ev.missing.join(', ')}</span>}</td>
+                        <td className="ev">{issue && <div style={{ marginBottom: 4 }}><span className="pill flag">Policy issue {issue.clause}</span></div>}{!ev ? <span className="pill none">Not checked</span> : ev.linked ? <><span className="pill ok">Linked</span><div className="muted" style={{ marginTop: 3 }}>{ev.evidence.join(', ')}</div></> : <><span className="pill flag">No record</span><div className="muted" style={{ marginTop: 3 }}>Needs {ev.missing.join(', ')}</div></>}</td>
                       </tr>
                     );
                   })}
                   {removed.map(l => (
-                    <tr key={'r' + l.id}><td className="strike">{l.id}</td><td><span className="code strike">{l.code}</span></td><td className="strike">{l.desc}<div className="small" style={{ color: 'var(--terra)', textDecoration: 'none' }}>removed with desk approval</div></td><td className="num strike">{inr(l.amount)}</td><td></td></tr>
+                    <tr key={'r' + l.id}><td className="code strike">{l.id}</td><td><span className="strike">{l.desc}</span><div className="small" style={{ color: 'var(--gate)' }}>Removed after desk approval</div></td><td className="num strike">{inr(l.amount)}</td><td /></tr>
                   ))}
                 </tbody>
               </table>
             </div>
             {snap && (
-              <div className="kv" style={{ marginTop: 12 }}>
-                <div>Claimed</div><div>{inr(snap.financials.claimed)}</div>
-                <div>Admissible</div><div><b>{inr(snap.financials.admissible)}</b></div>
-                <div>Patient pays</div><div>{inr(snap.financials.patientPayable)}{snap.financials.copay ? ` (incl. co-pay ${inr(snap.financials.copay)})` : ''}</div>
+              <div className="totals">
+                <div><span>Claimed</span><b>{inr(snap.financials.claimed)}</b></div>
+                <div><span>Admissible under the policy</span><b>{inr(snap.financials.admissible)}</b></div>
+                <div><span>Patient pays at discharge</span><b>{inr(snap.financials.patientPayable)}</b>{snap.financials.copay ? <span>includes co-pay {inr(snap.financials.copay)}</span> : null}{snap.financials.disputed ? <span>{inr(snap.financials.disputed)} disputed, with the adjudicator</span> : null}</div>
               </div>
             )}
-          </div>
+          </section>
 
-          <div className="card">
-            <div className="eyebrow">Documents</div>
-            {docs.map(doc => {
-              const full = claim.documents.find(x => x.id === doc.id);
-              const text = full ? full.text : fetchedText[doc.id];
-              return (
-                <div key={doc.id}>
-                  <button className="docbtn" onClick={() => setOpenDoc(openDoc === doc.id ? null : doc.id)}>
-                    <span>{doc.title}</span>
-                    {doc.fetched ? <span className="chip info">fetched by agent</span> : <span className="small muted">{doc.type}</span>}
-                  </button>
-                  {openDoc === doc.id && <div className="doctext">{text || 'Text not available.'}{doc.source ? <div className="small muted" style={{ marginTop: 6 }}>Source: {doc.source}</div> : null}</div>}
+          <section className="panel" id="policy">
+            <header><h2>3. Policy checks</h2><span className="sect-note">Deterministic rules engine, not the language model</span></header>
+            <div className="body">
+              {!snap && <p className="muted">The rules run when the agent calls the policy tool. Each result cites the clause it comes from.</p>}
+              {snap && snap.checks.map((c, i) => (
+                <div className="check" key={i}>
+                  <span><span className={`pill ${c.status === 'pass' ? 'ok' : c.status === 'warn' ? 'hold' : 'flag'}`}>{c.status === 'pass' ? 'Pass' : c.status === 'warn' ? 'Warning' : 'Fail'}</span></span>
+                  <span className="cl">{c.clause}</span>
+                  <span>{clauses[c.clause] ? clauses[c.clause].title : ''}<small>{c.detail}</small></span>
                 </div>
-              );
-            })}
-          </div>
-
-          {snap && (
-            <div className="card">
-              <div className="eyebrow">Policy checks (rules engine)</div>
-              <table>
-                <tbody>
-                  {snap.checks.map((c, i) => (
-                    <tr key={i}>
-                      <td style={{ width: 70 }}><span className={`chip ${c.status === 'pass' ? 'good' : c.status === 'warn' ? 'warn' : 'bad'}`}>{c.status}</span></td>
-                      <td><b>{c.clause}</b> {clauses[c.clause] ? clauses[c.clause].title : ''}<div className="small muted">{c.detail}</div></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              ))}
             </div>
-          )}
+          </section>
         </div>
 
-        {/* RIGHT: the agent */}
-        <div>
-          <div className="card">
-            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <div>
-                <div className="eyebrow">Agent trace</div>
-                <h2>What ClaimReady is doing</h2>
-              </div>
-              {mode && <span className={`chip ${mode.mode === 'llm' ? 'info' : 'warn'}`}>{mode.mode === 'llm' ? `LLM agent · ${mode.model}` : 'Fallback planner (no LLM)'}</span>}
+        <div className="sticky">
+          <section className="panel" id="agent">
+            <header><h2>4. Agent trace</h2><span className="sect-note">{events.filter(e => e.type === 'tool_result').length} tool calls{agentMs || running ? `, ${secs(liveMs)} agent time` : ''}</span></header>
+            <div className={`mode ${shownMode.mode === 'llm' ? 'llm' : 'fb'}`}>
+              <span className={`pill ${shownMode.mode === 'llm' ? 'info' : 'hold'}`}>{shownMode.mode === 'llm' ? `LLM planner, ${shownMode.model}` : 'Deterministic fallback'}</span>
+              <span>
+                {shownMode.pending && shownMode.mode === 'llm' && <>This deployment has a model configured. The language model will choose each tool call; you will see its reasoning notes.</>}
+                {shownMode.pending && shownMode.mode !== 'llm' && <>No language model is configured here, so the fallback planner will run the same tools in a fixed order. Its notes are scripted, not model output.</>}
+                {!shownMode.pending && (mode.reason || '')}
+              </span>
             </div>
-            {!events.length && !running && <p className="muted">Press <b>Run ClaimReady agent</b>. Each step below is a real tool call: the agent plans, calls tools, reads results and decides what to do next.</p>}
-            <div className="trace" ref={traceRef}>
+            <div className={`trace ${paused ? 'compact' : d ? 'tight' : ''}`} ref={traceRef} aria-live="polite">
+              {!events.length && !running && <p className="empty">Press <b>Run the agent</b>. Every card is a real tool call with its input and output; nothing is pre-recorded.</p>}
               {events.map((e, i) => {
-                if (e.type === 'thought') return <div key={i} className="thought">{e.text}</div>;
-                if (e.type === 'notice') return <div key={i} className="notice small">{e.text}</div>;
-                if (e.type === 'human') return <div key={i} className="human">👤 {e.text}</div>;
-                if (e.type === 'error') return <div key={i} className="notice">Error: {e.text}</div>;
+                if (e.type === 'thought') return <div key={i} className={`note ${e.source === 'llm' ? 'llm' : ''}`}><i>{e.source === 'llm' ? 'LLM reasoning' : 'Planner note (scripted)'}</i>{e.text}</div>;
+                if (e.type === 'notice') return <div key={i} className="sys">{e.text}</div>;
+                if (e.type === 'mode') return <div key={i} className="sys"><b>Switched to the deterministic fallback.</b> {e.reason}</div>;
+                if (e.type === 'human') return <div key={i} className="human">{e.text}</div>;
+                if (e.type === 'error') return <div key={i} className="sys">{e.text}</div>;
                 if (e.type === 'paused') return null;
                 if (e.type === 'tool_call') {
-                  const done = events.slice(i + 1).some(x => x.type === 'tool_result' && x.name === e.name);
-                  if (done) return null;
-                  const [stage, label] = TOOL_LABEL[e.name] || [e.name, ''];
-                  return <div key={i} className="step"><div className="head"><span><span className="tool">{stage}</span> · {label}</span><span className="pulse" /></div></div>;
+                  const doneIt = events.slice(i + 1).some(x => x.type === 'tool_result' && x.name === e.name);
+                  if (doneIt) return null;
+                  if (paused && e.name === 'propose_bill_change') return null;
+                  const [, label] = TOOL[e.name] || [null, e.name];
+                  return <div key={i} className="ev-step"><div className="h"><b>{label}</b><span className="pulse" /></div></div>;
                 }
                 if (e.type === 'tool_result') {
-                  const [stage, label, kind] = TOOL_LABEL[e.name] || [e.name, '', 'check'];
+                  const [, label, kind] = TOOL[e.name] || [null, e.name, 'check'];
                   return (
-                    <div key={i} className={`step icon-${kind}`}>
-                      <div className="head"><span><span className="tool">{stage}</span> · {label}</span><span className="ms"><span className="code">{e.name}</span> {secs(e.ms)}</span></div>
-                      <div className="res">{summarize(e.name, e.args, e.result)}</div>
+                    <div key={i} className={`ev-step k-${kind}`}>
+                      <div className="h"><b>{label}</b><span>{e.name}, {secs(e.ms)}</span></div>
+                      <div className="r">{summarize(e.name, e.args, e.result)}</div>
                       <details><summary>Tool input and output</summary><pre>{JSON.stringify({ input: e.args, output: e.result }, null, 2)}</pre></details>
                     </div>
                   );
@@ -251,40 +314,53 @@ export default function ClaimWorkspace({ claim, total, clauses, policy }) {
               })}
             </div>
 
-            {paused && (
-              <div className="approval" style={{ marginTop: 12 }}>
-                <div className="eyebrow">Needs your approval · money changes</div>
-                <h3>Remove {paused.approval.line_id}: {paused.approval.desc} ({inr(paused.approval.amount)})?</h3>
-                <p className="small" style={{ margin: '6px 0 12px' }}>{paused.approval.reason}</p>
-                <div className="row">
-                  <button className="btn good" onClick={() => decide('approve')}>Approve removal</button>
-                  <button className="btn bad" onClick={() => decide('reject')}>Reject</button>
+            <div id="desk">
+              {paused && (
+                <div className="gatebox" role="region" aria-label="Desk approval needed">
+                  <span className="pill gate">5. Desk approval needed</span>
+                  <h3>Remove {paused.approval.line_id}, {paused.approval.desc}, {inr(paused.approval.amount)}?</h3>
+                  <p className="small">{paused.approval.reason}</p>
+                  <p className="small muted" style={{ marginTop: 6 }}>The agent has stopped. The billed amount changes only if you approve. Rejecting keeps the line and the agent continues.</p>
+                  <div className="btns">
+                    <button className="btn ok" onClick={() => decide('approve')}>Approve removal</button>
+                    <button className="btn no" onClick={() => decide('reject')}>Reject and keep the line</button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
-            {d && (
-              <div className={`decision ${d.status === 'AUTO_APPROVED' ? 'good' : d.lane === 'flagged' ? 'flag' : 'review'}`} style={{ marginTop: 12 }}>
-                <div className="eyebrow" style={{ color: 'inherit' }}>Insurer decision · re-verified independently</div>
-                <div className="big">{d.status === 'AUTO_APPROVED' ? `Auto-approved ${inr(d.approvedAmount)}` : d.lane === 'flagged' ? 'Flagged for adjudicator' : 'Clean, sent to adjudicator'}</div>
-                <div style={{ marginTop: 6 }}>
-                  {d.status === 'AUTO_APPROVED' && <>Decided in <b>{secs(d.decisionMs)}</b> after submission · whole run {secs(elapsed)} · patient pays {inr(d.patientPayable)}</>}
-                  {d.status !== 'AUTO_APPROVED' && <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>{(d.reasons || []).map((r, i) => <li key={i} className="small">{r}</li>)}</ul>}
+            <div id="insurer">
+              {d && (
+                <div className={`result ${d.status === 'AUTO_APPROVED' ? 'ok' : d.lane === 'flagged' ? 'flag' : 'hold'}`}>
+                  <span className="small"><b>6. Insurer result</b> from the simulated insurer, which re-ran every check itself</span>
+                  <div className="big">{d.status === 'AUTO_APPROVED' ? `Auto-approved, ${inr(d.approvedAmount)}` : d.lane === 'flagged' ? 'Flagged to a medical adjudicator' : 'Clean, sent to an adjudicator to confirm'}</div>
+                  {d.status === 'AUTO_APPROVED' ? <p className="small">Patient pays {inr(d.patientPayable)}. {d.note}</p>
+                    : <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>{(d.reasons || []).map((r, i) => <li key={i} className="small">{r}</li>)}</ul>}
+                  {d.status !== 'AUTO_APPROVED' && <p className="small muted" style={{ marginTop: 6 }}>{d.note}</p>}
+                  <div className="times">
+                    <div><b>{secs(agentMs)}</b>Agent workflow time, this run, excluding time waiting for the desk{final.mode !== 'llm' ? '. Includes 0.6 s of on-screen pacing per step' : ''}</div>
+                    <div><b>{secs(d.decisionMs)}</b>Insurer decision, simulated: re-check {secs(d.recheckMs)} plus a fixed {secs(d.simulatedMs)} stand-in delay</div>
+                    <div><b>Not measured here</b>Real-world turnaround. The 64% decided in under 10 minutes comes from our simulation (see How it works)</div>
+                  </div>
+                  {final.summary && <p className="small" style={{ marginTop: 10 }}><b>{final.mode === 'llm' ? 'Summary written by the LLM:' : 'Summary (template text from the fallback planner):'}</b> {final.summary}</p>}
                 </div>
-                <div className="small muted" style={{ marginTop: 6 }}>{d.note}</div>
-                {final.summary && <div style={{ marginTop: 10 }}><b>Agent summary for the desk:</b> {final.summary}</div>}
-              </div>
-            )}
-
-            {snap && snap.deskMessages.length > 0 && (
-              <div className="card" style={{ marginTop: 12, background: '#fff' }}>
-                <div className="eyebrow">Messages to the desk</div>
-                {snap.deskMessages.map((m, i) => <p key={i} style={{ margin: '4px 0' }}>{m.message}</p>)}
-              </div>
-            )}
-          </div>
+              )}
+              {final && !d && <div className="result hold"><div className="big">Not submitted</div><p className="small">{final.summary}</p></div>}
+            </div>
+          </section>
         </div>
       </div>
+
+      <section className="panel" id="messages" style={{ marginTop: 16 }}>
+        <header><h2>7. Messages with the insurer</h2><span className="sect-note">Hospital and insurer go back and forth here until the claim is approved or rejected</span></header>
+        <div className="body">
+          <ThreadList events={thread} />
+          {threadStatus(thread) === 'QUERY' && <HospitalReply claimId={claim.id} events={thread} onDone={setThread} />}
+          {threadStatus(thread) === 'APPROVED' && <p className="sys" style={{ marginTop: 10, background: 'var(--ok-tint)', color: 'var(--ok)' }}>Final: approved. The patient can be discharged.</p>}
+          {threadStatus(thread) === 'REJECTED' && <p className="sys" style={{ marginTop: 10, background: 'var(--flag-tint)', color: 'var(--flag)' }}>Final: rejected by the claims review committee. The reason is recorded above.</p>}
+          {(threadStatus(thread) === 'AI_REVIEW' || threadStatus(thread) === 'DOCS_UPLOADED' || threadStatus(thread) === 'SUBMITTED') && <p className="small muted" style={{ marginTop: 10 }}>Waiting for the insurer&apos;s officer. Open the <a href={`/insurer/${claim.id}`}>insurer review for this claim</a> to act as the insurer in this demo.</p>}
+        </div>
+      </section>
     </div>
   );
 }
