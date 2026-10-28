@@ -1,19 +1,19 @@
 import { CLAIMS, HOSPITAL, billTotal } from '@/lib/data';
 import { POLICY } from '@/lib/policy';
+import { DEMO } from '@/lib/demo';
 import DeskQueue from '@/components/DeskQueue';
 
 export default function DeskPage() {
-  const rows = CLAIMS.map(c => ({
+  const rows = [...CLAIMS].sort((a, b) => DEMO[a.id].order - DEMO[b.id].order).map(c => ({
     id: c.id, patient: c.patient, diagnosis: c.diagnosis, procedure: c.procedure,
-    amount: billTotal(c.bill), docs: c.documents.length, deskNote: c.deskNote, discharge: c.discharge
+    amount: billTotal(c.bill), deskNote: c.deskNote, demo: DEMO[c.id]
   }));
   return (
     <div>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 14 }}>
+      <div className="page-head">
         <div>
-          <div className="eyebrow">Hospital insurance desk · {HOSPITAL.name}, {HOSPITAL.city}</div>
-          <h1>Priya&apos;s discharge queue</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }}>Six patients with discharge advised today. Insurer: {POLICY.insurer}. Open a claim and run the agent.</p>
+          <h1>Discharge queue</h1>
+          <p>{HOSPITAL.name}, {HOSPITAL.city}. Six cashless claims with discharge advised today, all with {POLICY.insurer}. Start with C-103: it shows the desk approval gate.</p>
         </div>
       </div>
       <DeskQueue rows={rows} />

@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req) {
   const body = await req.json();
-  const { claimId, resume, stepsSoFar } = body;
+  const { claimId, resume, stepsSoFar, runMsSoFar } = body;
   const claim = getClaim(claimId);
   if (!claim) return new Response(JSON.stringify({ error: 'Unknown claim' }), { status: 404 });
 
@@ -26,11 +26,11 @@ export async function POST(req) {
           const d = out.decision;
           await saveRun({
             claim_id: claimId, patient: claim.patient.name, mode: out.mode,
-            model: out.mode === 'llm' ? (process.env.OPENAI_MODEL || 'gpt-4.1-mini') : 'rule-based planner',
+            model: out.mode === 'llm' ? (out.model || process.env.OPENAI_MODEL || 'gpt-4.1-mini') : 'deterministic planner',
             status: d.status, lane: d.lane || null,
             approved_amount: d.approvedAmount ?? null, patient_payable: d.financials ? d.financials.patientPayable : null,
             decision_ms: d.decisionMs ?? null, reasons: d.reasons || [], summary: out.summary,
-            steps, packet: out.state
+            steps, packet: { ...out.state, runMs: (out.runMs || 0) + (Number(runMsSoFar) || 0), recheckMs: d.recheckMs ?? null, simulatedMs: d.simulatedMs ?? null, fallbackReason: out.mode === 'fallback' ? out.reason : null }
           });
         }
       } catch (err) {
