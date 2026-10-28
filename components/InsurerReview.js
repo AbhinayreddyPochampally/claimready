@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { inr, decisionChip, when } from './format';
-import { useThread, ThreadList, OfficerDecision, status as threadStatus } from './Thread';
+import { useThread, ThreadList, OfficerDecision, NoteBox, status as threadStatus } from './Thread';
 
 export default function InsurerReview({ claim }) {
   const [thread, setThread] = useThread(claim.id, 0);
@@ -40,6 +40,8 @@ export default function InsurerReview({ claim }) {
           <div className="body">
             <ThreadList events={thread} />
             {run && st && st !== 'APPROVED' && st !== 'REJECTED' && <OfficerDecision claimId={claim.id} events={thread} suggestedAmount={admissible} onDone={setThread} />}
+            {thread && thread.some(e => e.kind === 'HUMAN_HELP' && e.actor === 'hospital') && <p className="sys" style={{ marginTop: 10 }}>The hospital asked for a person to call back. Contact the desk before deciding.</p>}
+            <NoteBox claimId={claim.id} actor="insurer_officer" onDone={setThread} />
             {(st === 'APPROVED' || st === 'REJECTED') && <p className="small muted" style={{ marginTop: 10 }}>This claim is closed. Running the agent again on the hospital side starts a new submission.</p>}
           </div>
         </section>

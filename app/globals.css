@@ -274,3 +274,5 @@ tr.old td { background: #fafbfc; color: var(--muted); }
 .reply .chk { display: flex; gap: 8px; align-items: center; }
 .file-row { display: grid; grid-template-columns: 1fr 220px; gap: 8px; align-items: center; }
 @media (max-width: 640px) { .file-row { grid-template-columns: 1fr; } }
+.note-box { background: #fff; }
+.thread > li.t-hospital .pill.gate, .thread > li.t-insurer_officer .pill.gate { font-weight: 700; }

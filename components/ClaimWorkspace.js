@@ -1,7 +1,7 @@
 'use client';
 import { useRef, useState, useEffect } from 'react';
 import { inr, secs, decisionChip } from './format';
-import { useThread, ThreadList, HospitalReply, status as threadStatus } from './Thread';
+import { useThread, ThreadList, HospitalReply, NoteBox, status as threadStatus } from './Thread';
 
 const TOOL = {
   read_claim_file: ['file', 'Read the claim file', 'check'],
@@ -159,6 +159,7 @@ export default function ClaimWorkspace({ claim, clauses, policy, planner, demo }
   const d = final && final.decision;
   const chip = decisionChip(d);
   const st = stepStatus(events, paused, final, running);
+  const agentFailed = !running && !paused && (events.some(e => e.type === 'error') || (final && !final.decision));
   const shownMode = mode || (planner.available ? { mode: 'llm', model: planner.model, pending: true } : { mode: 'fallback', model: 'deterministic planner', pending: true });
 
   return (
@@ -354,10 +355,12 @@ export default function ClaimWorkspace({ claim, clauses, policy, planner, demo }
       <section className="panel" id="messages" style={{ marginTop: 16 }}>
         <header><h2>7. Messages with the insurer</h2><span className="sect-note">Hospital and insurer go back and forth here until the claim is approved or rejected</span></header>
         <div className="body">
+          {agentFailed && <div className="sys" style={{ marginBottom: 10 }}><b>The agent could not finish this claim.</b> Nothing was submitted. Run it again, or ask a person at the insurer for help below; the desk can still handle the claim by hand.</div>}
           <ThreadList events={thread} />
           {threadStatus(thread) === 'QUERY' && <HospitalReply claimId={claim.id} events={thread} onDone={setThread} />}
           {threadStatus(thread) === 'APPROVED' && <p className="sys" style={{ marginTop: 10, background: 'var(--ok-tint)', color: 'var(--ok)' }}>Final: approved. The patient can be discharged.</p>}
           {threadStatus(thread) === 'REJECTED' && <p className="sys" style={{ marginTop: 10, background: 'var(--flag-tint)', color: 'var(--flag)' }}>Final: rejected by the claims review committee. The reason is recorded above.</p>}
+          <NoteBox claimId={claim.id} actor="hospital" onDone={setThread} defaultHuman={agentFailed} key={agentFailed ? 'f' : 'n'} />
           {(threadStatus(thread) === 'AI_REVIEW' || threadStatus(thread) === 'DOCS_UPLOADED' || threadStatus(thread) === 'SUBMITTED') && <p className="small muted" style={{ marginTop: 10 }}>Waiting for the insurer&apos;s officer. Open the <a href={`/insurer/${claim.id}`}>insurer review for this claim</a> to act as the insurer in this demo.</p>}
         </div>
       </section>

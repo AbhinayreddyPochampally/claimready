@@ -41,5 +41,12 @@ export async function POST(req) {
     await addEvent({ ...base, actor: 'insurer_ai', ...rec });
     return Response.json({ ok: true, events: await listThread(claim.id) });
   }
+  if (b.action === 'note') {
+    const who = b.actor === 'insurer_officer' ? 'insurer_officer' : 'hospital';
+    const text = String(b.message || '').trim().slice(0, 1000);
+    if (!text) return Response.json({ error: 'Write a note first.' }, { status: 400 });
+    await addEvent({ ...base, actor: who, kind: b.human ? 'HUMAN_HELP' : 'NOTE', message: text });
+    return Response.json({ ok: true, events: await listThread(claim.id) });
+  }
   return Response.json({ error: 'Unknown action' }, { status: 400 });
 }

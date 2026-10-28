@@ -5,7 +5,8 @@ import { inr, when } from './format';
 const WHO = { hospital: 'Hospital desk', insurer_ai: 'Insurer, automated check', insurer_officer: 'Insurer officer' };
 const KIND = {
   SUBMITTED: ['Submitted', 'info'], AI_REVIEW: ['Recommendation', 'hold'], QUERY: ['Documents requested', 'gate'],
-  DOCS_UPLOADED: ['Documents sent', 'info'], APPROVED: ['Approved', 'ok'], REJECTED: ['Rejected', 'flag']
+  DOCS_UPLOADED: ['Documents sent', 'info'], APPROVED: ['Approved', 'ok'], REJECTED: ['Rejected', 'flag'],
+  NOTE: ['Note', 'none'], HUMAN_HELP: ['Person requested', 'gate']
 };
 export const DOC_TYPES = ['Itemised pharmacy bill', 'ICU notes', 'Investigation report', 'Doctor’s order for the test', 'Operative note', 'Discharge summary', 'Final bill', 'Implant invoice', 'Other'];
 
@@ -18,8 +19,10 @@ export function useThread(claimId, refreshKey) {
 
 export function status(events) {
   if (!events || !events.length) return null;
-  const final = [...events].reverse().find(e => e.kind === 'APPROVED' || e.kind === 'REJECTED');
-  const last = events[events.length - 1];
+  const real = events.filter(e => e.kind !== 'NOTE' && e.kind !== 'HUMAN_HELP');
+  if (!real.length) return null;
+  const final = [...real].reverse().find(e => e.kind === 'APPROVED' || e.kind === 'REJECTED');
+  const last = real[real.length - 1];
   if (final && new Date(final.at) >= new Date(last.at)) return final.kind;
   return last.kind;
 }
@@ -118,6 +121,30 @@ export function OfficerDecision({ claimId, events, suggestedAmount, onDone }) {
         <textarea placeholder="Reason and clause, for example: C4.2 waiting period not met" value={msg} onChange={e => setMsg(e.target.value)} rows={2} />
         <button className="btn no" disabled={busy} onClick={() => go('REJECTED')}>Record rejection</button></div>}
       {err && <p className="sys" style={{ marginTop: 8 }}>{err}</p>}
+    </div>
+  );
+}
+
+export function NoteBox({ claimId, actor, onDone, defaultHuman = false }) {
+  const [text, setText] = useState('');
+  const [human, setHuman] = useState(defaultHuman);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const other = actor === 'hospital' ? 'insurer' : 'hospital desk';
+  async function send() {
+    setErr(''); setBusy(true);
+    const r = await fetch('/api/thread', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ claimId, action: 'note', actor, human, message: text }) }).then(x => x.json()).catch(() => ({ error: 'Could not send. Check your connection and try again.' }));
+    setBusy(false);
+    if (r.error) { setErr(r.error); return; }
+    setText(''); setHuman(false); onDone(r.events);
+  }
+  return (
+    <div className="reply note-box">
+      <h3>Notes and help from a person</h3>
+      <textarea rows={2} value={text} onChange={e => setText(e.target.value)} placeholder={`Note to the ${other}, for example a clarification or context the agent cannot see`} />
+      <label className="small chk"><input type="checkbox" checked={human} onChange={e => setHuman(e.target.checked)} /> Ask for a person on the {other} side to call back (use this when the agent fails or the case needs discussion)</label>
+      {err && <p className="sys">{err}</p>}
+      <button className="btn ghost" disabled={busy || !text.trim()} onClick={send}>{human ? 'Send and request a person' : 'Add note'}</button>
     </div>
   );
 }
