@@ -29,11 +29,11 @@ export default function How() {
       </div></div>
       <div className="ws">
         <div className="panel"><header><h2>Tools the agent can call</h2></header><div className="body">
-          <table><tbody>{TOOLS.map(([n, s, d]) => <tr key={n}><td style={{ width: 120 }}><b>{s}</b></td><td><span className="code">{n}</span><div className="small muted">{d}</div></td></tr>)}</tbody></table>
+          <div style={{ overflowX: 'auto' }}><table><tbody>{TOOLS.map(([n, s, d]) => <tr key={n}><td style={{ width: 120 }}><b>{s}</b></td><td><span className="code">{n}</span><div className="small muted">{d}</div></td></tr>)}</tbody></table></div>
         </div></div>
         <div>
           <div className="panel"><header><h2>Who decides what</h2></header>
-            <table><thead><tr><th>Action</th><th>Decides</th><th>Why</th></tr></thead><tbody>{AUTONOMY.map(r => <tr key={r[0]}><td>{r[0]}</td><td><b>{r[1]}</b></td><td className="small muted">{r[2]}</td></tr>)}</tbody></table>
+            <div style={{ overflowX: 'auto' }}><table><thead><tr><th>Action</th><th>Decides</th><th>Why</th></tr></thead><tbody>{AUTONOMY.map(r => <tr key={r[0]}><td>{r[0]}</td><td><b>{r[1]}</b></td><td className="small muted">{r[2]}</td></tr>)}</tbody></table></div>
           </div>
           <div className="panel"><header><h2>Stack</h2></header><div className="body">
             <ul style={{ margin: 0, paddingLeft: 18 }}>
